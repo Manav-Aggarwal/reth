@@ -107,6 +107,16 @@ build-op: ## Build the op-reth binary into `target` directory.
 build-rollkit: ## Build the rollkit-reth binary into `target` directory.
 	cargo build --bin rollkit-reth --features "$(FEATURES)" --profile "$(PROFILE)" --manifest-path crates/rollkit/Cargo.toml
 
+.PHONY: build-rollkit-debug
+build-rollkit-debug: ## Build the rollkit-reth binary into `target/debug` directory.
+	cargo build --bin rollkit-reth --features "$(FEATURES)" --manifest-path crates/rollkit/Cargo.toml
+
+.PHONY: build-rollkit-reproducible
+build-rollkit-reproducible: ## Build the rollkit-reth binary into `target` directory with reproducible builds. Only works for x86_64-unknown-linux-gnu currently
+	RUSTC_BOOTSTRAP=1 RUSTFLAGS="-Z threads=1" cargo build --bin rollkit-reth \
+	--features "$(FEATURES)" --profile "$(PROFILE)" --target x86_64-unknown-linux-gnu \
+	--manifest-path crates/rollkit/Cargo.toml
+
 # Builds the reth binary natively.
 build-native-%:
 	cargo build --bin reth --target $* --features "$(FEATURES)" --profile "$(PROFILE)"
@@ -363,6 +373,66 @@ define op_docker_build_push
 		--push
 endef
 
+##@ Rollkit docker
+
+# Note: This requires a buildx builder with emulation support. For example:
+#
+# `docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64`
+# `docker buildx create --use --driver docker-container --name cross-builder`
+.PHONY: rollkit-docker-build-push
+rollkit-docker-build-push: ## Build and push a cross-arch Docker image tagged with the latest git tag.
+	$(call rollkit_docker_build_push,$(GIT_TAG),$(GIT_TAG))
+
+# Note: This requires a buildx builder with emulation support. For example:
+#
+# `docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64`
+# `docker buildx create --use --driver docker-container --name cross-builder`
+.PHONY: rollkit-docker-build-push-git-sha
+rollkit-docker-build-push-git-sha: ## Build and push a cross-arch Docker image tagged with the latest git sha.
+	$(call rollkit_docker_build_push,$(GIT_SHA),$(GIT_SHA))
+
+# Note: This requires a buildx builder with emulation support. For example:
+#
+# `docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64`
+# `docker buildx create --use --driver docker-container --name cross-builder`
+.PHONY: rollkit-docker-build-push-latest
+rollkit-docker-build-push-latest: ## Build and push a cross-arch Docker image tagged with the latest git tag and `latest`.
+	$(call rollkit_docker_build_push,$(GIT_TAG),latest)
+
+# Note: This requires a buildx builder with emulation support. For example:
+#
+# `docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64`
+# `docker buildx create --use --name cross-builder`
+.PHONY: rollkit-docker-build-push-nightly
+rollkit-docker-build-push-nightly: ## Build and push cross-arch Docker image tagged with the latest git tag with a `-nightly` suffix, and `latest-nightly`.
+	$(call rollkit_docker_build_push,nightly,nightly)
+
+# Note: This requires a buildx builder with emulation support. For example:
+#
+# `docker run --privileged --rm tonistiigi/binfmt --install amd64,arm64`
+# `docker buildx create --use --name cross-builder`
+.PHONY: rollkit-docker-build-push-nightly-profiling
+rollkit-docker-build-push-nightly-profiling: ## Build and push cross-arch Docker image tagged with the latest git tag with a `-nightly` suffix, and `latest-nightly`.
+	$(call rollkit_docker_build_push,nightly-profiling,nightly-profiling)
+
+# Create a cross-arch Docker image with the given tags and push it
+define rollkit_docker_build_push
+	$(MAKE) rollkit-build-x86_64-unknown-linux-gnu
+	mkdir -p $(BIN_DIR)/amd64
+	cp $(CARGO_TARGET_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/rollkit-reth $(BIN_DIR)/amd64/rollkit-reth
+
+	$(MAKE) rollkit-build-aarch64-unknown-linux-gnu
+	mkdir -p $(BIN_DIR)/arm64
+	cp $(CARGO_TARGET_DIR)/aarch64-unknown-linux-gnu/$(PROFILE)/rollkit-reth $(BIN_DIR)/arm64/rollkit-reth
+
+	docker buildx build --file ./Dockerfile.rollkit . \
+		--platform linux/amd64,linux/arm64 \
+		--tag $(DOCKER_IMAGE_NAME):$(1) \
+		--tag $(DOCKER_IMAGE_NAME):$(2) \
+		--provenance=false \
+		--push
+endef
+
 ##@ Other
 
 .PHONY: clean
@@ -413,6 +483,18 @@ maxperf-op: ## Builds `op-reth` with the most aggressive optimisations.
 .PHONY: maxperf-no-asm
 maxperf-no-asm: ## Builds `reth` with the most aggressive optimisations, minus the "asm-keccak" feature.
 	RUSTFLAGS="-C target-cpu=native" cargo build --profile maxperf --features jemalloc
+
+.PHONY: profiling-rollkit
+profiling-rollkit: ## Builds `rollkit-reth` with optimisations, but also symbols.
+	RUSTFLAGS="-C target-cpu=native" cargo build --profile profiling --features jemalloc,asm-keccak --bin rollkit-reth --manifest-path crates/rollkit/Cargo.toml
+
+.PHONY: maxperf-rollkit
+maxperf-rollkit: ## Builds `rollkit-reth` with the most aggressive optimisations.
+	RUSTFLAGS="-C target-cpu=native" cargo build --profile maxperf --features jemalloc,asm-keccak --bin rollkit-reth --manifest-path crates/rollkit/Cargo.toml
+
+.PHONY: maxperf-rollkit-no-asm
+maxperf-rollkit-no-asm: ## Builds `rollkit-reth` with the most aggressive optimisations, minus the "asm-keccak" feature.
+	RUSTFLAGS="-C target-cpu=native" cargo build --profile maxperf --features jemalloc --bin rollkit-reth --manifest-path crates/rollkit/Cargo.toml
 
 
 fmt:
